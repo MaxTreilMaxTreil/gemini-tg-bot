@@ -28,12 +28,15 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    logger.info("Получена команда /start от user_id=%s", message.from_user.id if message.from_user else "unknown")
+    logger.info(
+        "Получена команда /start от user_id=%s",
+        message.from_user.id if message.from_user else "unknown",
+    )
     await message.answer("Привет! Напиши мне сообщение, и я отвечу.")
 
 
 def generate_reply_sync(prompt: str) -> str:
-    delays = [2, 4]
+    delays = [1, 2]
     for attempt, delay in enumerate(delays):
         try:
             logger.info("Отправка запроса в Gemini (попытка %s)...", attempt + 1)
@@ -68,10 +71,10 @@ async def handle_message(message: types.Message):
     try:
         reply_text = await asyncio.wait_for(
             asyncio.to_thread(generate_reply_sync, user_text),
-            timeout=25.0,
+            timeout=60.0,
         )
     except asyncio.TimeoutError:
-        logger.error("Таймаут (25 сек) при ожидании ответа от Gemini для user_id=%s", user_id)
+        logger.error("Таймаут (60 сек) при ожидании ответа от Gemini для user_id=%s", user_id)
         await message.answer("Gemini отвечает слишком долго (таймаут). Попробуйте ещё раз.")
         return
     except Exception as e:
