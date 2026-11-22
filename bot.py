@@ -41,7 +41,7 @@ def generate_reply_sync(prompt: str) -> str:
         try:
             logger.info("Отправка запроса в Gemini (попытка %s)...", attempt + 1)
             response = ai_client.models.generate_content(
-                model="gemini-3.8-flash",
+                model="gemini-2.5-flash",
                 contents=prompt,
             )
             text = getattr(response, "text", None)
