@@ -1,12 +1,25 @@
 import asyncio
+import logging
 import os
+import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiohttp import web
 from google import genai
 
-TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
+if not TELEGRAM_TOKEN:
+    raise RuntimeError("Не задана переменная окружения TELEGRAM_BOT_TOKEN.")
+if not GEMINI_API_KEY:
+    raise RuntimeError("Не задана переменная окружения GEMINI_API_KEY.")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
@@ -19,36 +32,58 @@ async def cmd_start(message: types.Message):
 
 
 def generate_reply(prompt: str) -> str:
-    try:
-        response = ai_client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-        )
-    except Exception as e:
-        if "503" in str(e):
+    delays = [2, 4]
+    for attempt, delay in enumerate(delays):
+        try:
             response = ai_client.models.generate_content(
-                model="gemini-3.8-flash-lite",
+                model="gemini-3.8-flash",
                 contents=prompt,
             )
-        else:
+            text = getattr(response, "text", None)
+            if text and text.strip():
+                return text.strip()
+            return "Модель вернула пустой ответ. Попробуйте переформулировать запрос."
+        except Exception as e:
+            err_str = str(e)
+            if "503" in err_str and attempt < len(delays) - 1:
+                logger.warning("Gemini 503 UNAVAILABLE, повтор через %s сек...", delay)
+                time.sleep(delay)
+                continue
             raise
-    return response.text or "Не удалось сформировать ответ."
 
 
 @dp.message()
 async def handle_message(message: types.Message):
-    if not message.text:
+    if not message.text or not message.text.strip():
         await message.answer("Пока понимаю только текстовые сообщения.")
         return
 
+    user_text = message.text.strip()
+
     try:
-        reply_text = await asyncio.to_thread(generate_reply, message.text)
+        reply_text = await asyncio.to_thread(generate_reply, user_text)
     except Exception as e:
-        if "503" in str(e):
-            await message.answer("Серверы Gemini сейчас перегружены, попробуйте ещё раз через пару секунд.")
+        err_str = str(e)
+        logger.error("Ошибка при обращении к Gemini: %s", err_str)
+
+        if "503" in err_str or "UNAVAILABLE" in err_str:
+            await message.answer(
+                "Серверы Gemini сейчас перегружены. Попробуйте отправить сообщение ещё раз через несколько секунд."
+            )
             return
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower():
+            await message.answer(
+                "Превышен лимит запросов к Gemini API. Подождите немного и попробуйте снова."
+            )
+            return
+        if "401" in err_str or "403" in err_str or "API_KEY" in err_str:
+            await message.answer(
+                "Проблема с ключом GEMINI_API_KEY. Проверьте настройки ключа на хостинге."
+            )
+            return
+
         await message.answer("Произошла ошибка при обращении к Gemini. Попробуйте чуть позже.")
-        raise
+        return
 
     for i in range(0, len(reply_text), 4096):
         await message.answer(reply_text[i:i + 4096])
@@ -66,6 +101,7 @@ async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
+    logger.info("HTTP health-check сервер запущен на порту %s", port)
 
 
 async def main():
