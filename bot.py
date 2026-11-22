@@ -2,6 +2,7 @@ import asyncio
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
+from aiohttp import web
 from google import genai
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -27,12 +28,25 @@ async def handle_message(message: types.Message):
       model="gemini-2.5-flash",
       contents=message.text,
   )
-  await message.answer(
-      response.text or "Не удалось сформировать ответ."
-  )
+  await message.answer(response.text or "Не удалось сформировать ответ.")
+
+
+async def health_check(request):
+  return web.Response(text="OK")
+
+
+async def start_web_server():
+  app = web.Application()
+  app.router.add_get("/", health_check)
+  runner = web.AppRunner(app)
+  await runner.setup()
+  port = int(os.environ.get("PORT", 10000))
+  site = web.TCPSite(runner, "0.0.0.0", port)
+  await site.start()
 
 
 async def main():
+  await start_web_server()
   await dp.start_polling(bot)
 
 
